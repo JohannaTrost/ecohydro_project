@@ -1,0 +1,257 @@
+---
+title: "sap_flow_calc"
+output: html_document
+---
+
+Load packages:
+```{r}
+library(readxl)
+library(tidyr)
+library(dplyr)
+```
+
+
+Load data:
+
+```{r}
+data_path <- "C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/sapflow/20260226_SFM1G30J_sapflow_K1.CSV" # treespecific excle
+params_path <- "2026 Ecohydrology Parameters to calculate tree sapflow.xlsx" # metadata
+df <- read.csv(data_path, check.names = F)
+colnames(df)[c(9:12,14:17, 21)] <- paste(substr(colnames(df)[c(9:12,14:17, 21)], 1, 10), "(°C)")
+params_tree <- read_excel(params_path)
+```
+
+Calculate parameter k, set parameter values:
+```{r}
+wd <- 0.0006535714 # dry weight
+wf <- 0.001072143 # fresh weight
+vf <- 4.835809e-06 # fresh volume 
+csap <- 4182 # sap specific heat capacity
+cwood<- 1200 # wood matrix specific heat capacity
+# specific heat capacity of green wood c:
+c <- (wd*cwood + csap*(wf - wd))/wf
+
+mc <- (wf - wd)/wd # gravimetric content of sapwood
+pb <- wd/vf# basic density of fresh wood
+# void fraction of wood Fv:
+fv <- 1 - ((pb*0.6536 + mc)/1000)
+
+ks <- 5.984e-1 # thermal conductivity of water at 20C
+ps <- 1000 # density of water
+kw <- 0.04182*(21.0 - 20.0*fv) # Thermal conductivity of dry wood matrix
+# Thermal conductivity Kgw
+kgw <- ks*mc*(pb/ps) + kw*(1 - mc*(pb/ps))
+
+p <- wf/vf # density of fresh wood
+# Thermal diffusivity k:
+k <- kgw/(p*c) * 10000
+
+# Wounding correction B
+wound_diameter <- 0.13
+B <- 6.5022 * wound_diameter + 0.5399
+
+x <- 0.5 # Distance in cm between probes and heat element
+
+time_step = 1800 # time between measurements in seconds
+
+params <- data.frame(wd = wd, wf = wf, vf = vf, csap = csap, cwood = cwood,
+                     c = c, mc = mc, pb = pb, fv = fv, ks = ks, ps = ps,
+                     kw = kw, kgw = kgw, p = p, k = k, x = x, B = B, time_step = time_step)
+```
+
+Define heat ratio method function:
+```{r}
+heat_vel <- function(params, ratio){
+  # multiplied by B for wounding correction
+  k <- params[1,]$k
+  x <- params[1,]$x
+  B <- params[1,]$B
+  t <- params[1,]$time_step
+  v <- (k/x)*log(ratio)* t * B
+  return(v) # 3600 is seconds in an hour for hourly values
+}
+
+sap_flux <- function(params, heat_vel){
+  # returns / in cm/h AKA cm^3/cm^2h
+  # TODO: do we need to account for wounding?
+  pb <- params[1,]$pb
+  cw <- params[1,]$cwood
+  mc <- params[1,]$mc
+  cs <- params[1,]$csap
+  ps <- params[1,]$ps
+  vs <- (heat_vel * pb * (cw + mc * cs)) / (ps * cs)
+  return(vs)
+}
+
+sap_flow <- function(sap_vel, area){
+  # returns volume in cm^3/h
+  sap_flux <- sap_vel * area
+  return(sap_flux)
+}
+
+```
+
+```{r}
+calc_flow <- function(file_path, params, sapwood_depth, bark_depth){
+
+  # load data
+  #df <- read.csv(file_path)
+  df <- read.csv(file_path, check.names = F)
+  colnames(df)[c(9:12,14:17, 21)] <- paste(substr(colnames(df)[c(9:12,14:17, 21)], 1, 10), "(°C)")
+
+
+  
+  # Change areas based on particular tree:
+  area_out <- pi * (sapwood_depth - bark_depth) ^ 2 - pi * (sapwood_depth - bark_depth - 2) ^ 2 
+  area_in <- pi * (sapwood_depth - bark_depth - 2) ^ 2 
+  
+  
+  df$heat_vel_out <- sapply(df$`Ratio Out`, function(ratio) heat_vel(params, ratio))
+  df$heat_vel_in <- sapply(df$`Ratio In`, function(ratio) heat_vel(params, ratio))
+  min_in <- min(df$heat_vel_in)
+  df$heat_vel_in <- df$heat_vel_in -min_in
+  min_out <- min(df$heat_vel_out)
+  df$heat_vel_out <- df$heat_vel_out - min_out
+  
+  df$sap_flux_out <- lapply(df$heat_vel_out, function(heat_vel) sap_flux(params, heat_vel))
+  df$sap_flux_in <- lapply(df$heat_vel_in, function(heat_vel) sap_flux(params, heat_vel))
+  df$sap_flux_in <- as.numeric(df$sap_flux_in)
+  df$sap_flux_out <- as.numeric(df$sap_flux_out)
+  df$sap_flow_out <- lapply(df$sap_flux_out, function(sap_flux) sap_flow(sap_flux, area_out))
+  df$sap_flow_in <- lapply(df$sap_flux_in, function(sap_flux) sap_flow(sap_flux, area_in))
+  df$sap_flow_in <- as.numeric(df$sap_flow_in)
+  df$sap_flow_out <- as.numeric(df$sap_flow_out)
+  df$sap_flow_total <- rowSums(df[,c('sap_flow_out','sap_flow_in')])
+  df$sap_flux_total <- rowSums(df[,c('sap_flux_out','sap_flux_in')])
+  return(df)
+}
+```
+
+```{r}
+# Inputs: path to file, parameters, sap wood depth, and bark depth
+
+for(i in list.files("~/UmWi_Master/Ecohydrology/sapflow")){
+  data_path <- paste0("~/UmWi_Master/Ecohydrology/sapflow/", i)
+  tree_id <- substr(i, 27, 28)
+  sap_depth <- subset(params_tree, Tree == tree_id)$`Sapwood depth (cm)`
+  bark <- subset(params_tree, Tree == tree_id)$`Bark depth (cm)`
+  test <- calc_flow(data_path, params, sap_depth, bark)
+  daily <- test %>% group_by(Date) %>% summarise(sap_flow_total = sum(sap_flow_total), sap_flow_in = sum(sap_flow_in), sap_flow_out = sum(sap_flow_out), sap_flux_in = sum(sap_flux_in), sap_flux_out = sum(sap_flux_out), sap_flux_total = sum(sap_flux_total))
+  write.csv(test, paste0("New_",i))
+  write.csv(daily, paste0("New_daily_",i))
+
+}
+
+```
+
+
+# plot
+```{r}
+K1 <-read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_20260226_SFM1G30J_sapflow_K1.CSV")
+K2 <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_20260226_SFM1G50B_sapflow_K2.CSV")
+K3 <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_20260226_SFM1G50E_sapflow_K3.CSV")
+
+D1 <-read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_20260226_SFM1G50A_sapflow_D1.CSV")
+D2 <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_20260226_SFM1G30X_sapflow_D2.CSV")
+D3 <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_20260226_SFM1G30Y_sapflow_D3.CSV")
+
+K1$DateTime <- as.POSIXct(paste(K1$Date, K1$Time), format = "%d/%m/%Y %H:%M:%S")
+K2$DateTime <- as.POSIXct(paste(K2$Date, K2$Time), format = "%d/%m/%Y %H:%M:%S")
+K3$DateTime <- as.POSIXct(paste(K3$Date, K3$Time), format = "%d/%m/%Y %H:%M:%S")
+D1$DateTime <- as.POSIXct(paste(D1$Date, D1$Time), format = "%d/%m/%Y %H:%M:%S")
+D2$DateTime <- as.POSIXct(paste(D2$Date, D2$Time), format = "%d/%m/%Y %H:%M:%S")
+D3$DateTime <- as.POSIXct(paste(D3$Date, D3$Time), format = "%d/%m/%Y %H:%M:%S")
+
+# waterpotential
+WP <- read_xlsx("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/water_potential_measurements.xlsx")
+WP$DateTime_wrapped <- as.POSIXct(paste(WP$Date,format(as.POSIXct(WP$Wrapped_at), "%H:%M:%S")),
+  format = "%d.%m.%Y %H:%M:%S")
+WP$DateTime_measured <- as.POSIXct(paste(WP$Date,format(as.POSIXct(WP$Measured_at), "%H:%M:%S")),
+  format = "%d.%m.%Y %H:%M:%S")
+
+
+plot(K1$sap_flow_total ~ K1$DateTime, type = "l", ylim= c(0, max(K3$sap_flow_total)), ylab= "Total sap fow [cm³]", xlab = "Date", lwd=1.5, col = "darkred")
+lines(K2$sap_flow_total ~ K2$DateTime, col= "orange", lwd=1.5)
+lines(K3$sap_flow_total ~ K3$DateTime, col= "yellow", lwd = 1.5)
+lines(D1$sap_flow_total ~D1$DateTime, col = "darkgreen", lwd = 1.5)
+lines(D2$sap_flow_total ~D2$DateTime, col = "green", lwd = 1.5)
+lines(D3$sap_flow_total ~D3$DateTime, col = "lightgreen", lwd = 1.5)
+
+legend("topright", legend= c("K1", "K2", "K3", "D1", "D2", "D3"), col = c("darkred", "orange", "yellow", "darkgreen", "green", "lightgreen"), lty = 1, lwd = 1.5, bty = "n")
+
+
+#----- with waterpotential 
+
+xrange <- range(K1$DateTime, na.rm = TRUE)
+
+# --- plot Sap Flow ---
+plot(K1$DateTime, K1$sap_flow_total,
+     type = "l",
+     xlim = xrange,
+     ylim = c(0, max(K3$sap_flow_total, na.rm = TRUE)),
+     ylab = "Total sap flow [cm³/h]",
+     xlab = "Date",
+     lwd = 1.5,
+     col = "darkred")
+
+lines(K2$DateTime, K2$sap_flow_total, col="orange", lwd=1.5)
+lines(K3$DateTime, K3$sap_flow_total, col="yellow", lwd=1.5)
+lines(D1$DateTime, D1$sap_flow_total, col="darkgreen", lwd=1.5)
+lines(D2$DateTime, D2$sap_flow_total, col="green", lwd=1.5)
+lines(D3$DateTime, D3$sap_flow_total, col="lightgreen", lwd=1.5)
+
+# --- second achse ---
+par(new = TRUE)
+
+plot(WP$DateTime_wrapped, WP$Pressure,
+     type = "p",
+     axes = FALSE,
+     xlab = "",
+     ylab = "",
+     xlim = xrange,   # gleiche x-Achse wie K1
+     ylim = range(WP$Pressure, na.rm = TRUE),
+     col = "blue",
+     pch = 16)
+
+axis(4)
+mtext("Water pressure [MPa]", side = 4, line = 3)
+
+legend("topright",
+       legend = c("K1", "K2", "K3",
+                  "D1", "D2", "D3",
+                  "WP"),
+       col = c("darkred", "orange", "yellow",
+               "darkgreen", "green", "lightgreen",
+               "blue"),
+       lty = c(1,1,1,1,1,1,NA),
+       pch = c(NA,NA,NA,NA,NA,NA,16),
+       lwd = 1.5,
+       bty = "n")
+```
+# /
+```{r}
+plot(K1$sap_flux_total ~ K1$DateTime, type = "l", ylim= c(0, max(K3$sap_flux_total)), ylab= "Total sap flux [cm/h]", xlab = "Date", lwd=1.5, col = "darkred")
+lines(K2$sap_flux_total ~ K2$DateTime, col= "orange", lwd=1.5)
+lines(K3$sap_flux_total ~ K3$DateTime, col= "yellow", lwd = 1.5)
+lines(D1$sap_flux_total ~D1$DateTime, col = "darkgreen", lwd = 1.5)
+lines(D2$sap_flux_total ~D2$DateTime, col = "green", lwd = 1.5)
+lines(D3$sap_flux_total ~D3$DateTime, col = "lightgreen", lwd = 1.5)
+
+legend("topright", legend= c("K1", "K2", "K3", "D1", "D2", "D3"), col = c("darkred", "orange", "yellow", "darkgreen", "green", "lightgreen"), lty = 1, lwd = 1.5, bty = "n")
+
+```
+
+# total flux per day
+```{r}
+K1_daily <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_daily_20260226_SFM1G30J_sapflow_K1.CSV")
+K2_daily <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_daily_20260226_SFM1G50B_sapflow_K2.CSV")
+K3_daily <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_daily_20260226_SFM1G50E_sapflow_K3.CSV")
+D1_daily <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_daily_20260226_SFM1G50A_sapflow_D1.CSV")
+D2_daily <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_daily_20260226_SFM1G30X_sapflow_D2.CSV")
+D3_daily <- read.csv("C:/Users/kalic/Documents/UmWi_Master/Ecohydrology/New_daily_20260226_SFM1G30Y_sapflow_D3.CSV")
+
+
+
+
+```
+

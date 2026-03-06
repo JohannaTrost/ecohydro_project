@@ -1,0 +1,163 @@
+---
+title: "opDendro"
+format: html
+editor: visual
+---
+
+```{r}
+# Data
+opD3 <- read.csv("20260119_D3_2026-02-27_074032.csv")
+opK1 <- read.csv("20260120_K1_2026-02-27_074240.csv")
+opK2 <- read.csv("20260120_K2_2026-02-27_074426.csv")
+opK3 <- read.csv("20260122_K3_2026-02-27_074620.csv")
+opD2 <- read.csv("20260126_D2_2026-02-27_073814.csv")
+opD1 <- read.csv("20260213_D1_2026-02-27_073650.csv")
+```
+
+
+```{r}
+# erster plot
+opD3$datetime <- as.POSIXct(opD3$date_recorded..UTC., 
+                       format = "%Y-%m-%dT%H:%M:%OSZ", 
+                       tz = "UTC")
+
+plot(opD3$datetime, opD3$area, type = "l")
+```
+```{r}
+# dateien zusammenführen
+
+library(dplyr)
+library(lubridate)
+
+df_list <- list(
+  D3 = opD3,
+  K1 = opK1,
+  K2 = opK2,
+  K3 = opK3,
+  D2 = opD2,
+  D1 = opD1
+)
+
+combined_df <- bind_rows(
+  lapply(names(df_list), function(n) {
+    
+    df_list[[n]] %>%
+      mutate(
+        datetime = ymd_hms(date_recorded..UTC., tz = "UTC"),
+        ID = n
+      )
+    
+  })
+)
+
+```
+
+```{r}
+# plot mit area von bäumen
+library(ggplot2)
+
+ggplot(combined_df, 
+       aes(x = datetime, y = area, color = ID, group = ID)) +
+  geom_line(linewidth = 0.8) +
+  theme_minimal() +
+  labs(
+    x = "Datetime",
+    y = "Area",
+    color = "ID"
+  )
+```
+
+```{r}
+# filter klappt noch nicht --> erzeugt zu viele NAs
+# neuen filter bauen für die daten dann, steps anpassen, vllt reichen mit allen daten mean, sd als filter
+#clean
+library(zoo)
+
+clean_df <- combined_df %>%
+  arrange(ID, datetime)
+ 
+  
+filtered_df <- combined_df %>%
+  arrange(ID, datetime) %>%  # wichtig für richtige Reihenfolge
+  group_by(ID) %>%
+  mutate(
+    delta_area_n = area - lag(area, n = 5),   # Differenz zum Wert 3 Schritte vorher
+    valid_step_n = is.na(delta_area_n) | abs(delta_area_n) <= 700 * 6  # TRUE wenn ok
+  ) %>%
+  filter(valid_step_n) %>%  # nur gültige Punkte behalten
+  ungroup()  
+
+
+x_max_change <- 20000  # größere Toleranz pro Schritt
+n_steps <- 25           # Schritte pro Filter
+
+filtered_df <- combined_df %>%
+  arrange(ID, datetime) %>%
+  group_by(ID) %>%
+  mutate(
+    delta_area = area - lag(area),
+    delta_area_n = area - lag(area, n = n_steps),
+    valid_step = abs(delta_area) <= x_max_change & abs(delta_area_n) <= x_max_change
+  ) %>%
+  filter(is.na(valid_step) | valid_step) %>%
+  ungroup()
+
+ggplot(filtered_df, aes(x = datetime_new, y = area, color = ID)) +
+  geom_point(linewidth = 1) +
+  theme_minimal() +
+  labs(
+    x = "Datetime",
+    y = "Area"
+  )
+```
+
+```{r}
+library(readxl)
+# water potential
+
+wp <- read_excel("water_potential_measurements.xlsx")
+wp$datetime <- as.POSIXct(paste(wp$Date, format(as.POSIXct(wp$Measured_at), "%H:%M:%S")), format = "%d.%m.%Y %H:%M:%S")
+
+wp$value <- wp$Pressure * -0.1
+wp$ID <- wp$Tree_id
+
+
+```
+
+```{r}
+# wp and area zusammen führen
+library(fuzzyjoin)
+
+wp <-wp %>%
+  mutate(datetime_new = round_date(datetime, "30 mins"))
+
+filtered_df <-filtered_df %>%
+  mutate(datetime_new = round_date(datetime, "30 mins"))%>%
+  group_by(datetime_new, ID) %>%
+  summarise(area = mean(area))
+
+
+all <- left_join(wp, filtered_df, by = join_by("ID" == "ID", "datetime_new" == "datetime_new")) 
+  
+
+
+ggplot( data = all, aes(x = value, y = area, color = Tree_id)) +
+  geom_point()+
+  theme_minimal()
+
+ggplot(data = all, aes(x = value, y = area, color = Tree_id)) +
+  geom_point() +
+  theme_minimal() +
+  facet_wrap(~ Tree_id, scales = "free") 
+
+all$day <- as.Date(all$datetime_new)
+
+ggplot(all, aes(x = value, y = area, color = ID)) +
+  geom_point() +
+  theme_minimal() +
+  facet_wrap(~ ID + day, scales = "free") +
+  labs(x = "Value", y = "Area") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
