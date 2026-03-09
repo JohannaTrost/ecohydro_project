@@ -4,6 +4,7 @@ library(lubridate)
 library(tidyverse)
 library(dplyr)
 library(stringi) # or library(stringr)
+library(ggplot2)
 
 dir <- "/Users/johanna/Uni/ws_25_26/ecohydrology/ecohydro_project/data/Water stable isotope analysis"
 
@@ -52,40 +53,7 @@ data_short <- data %>%
   ungroup()
 
 # Summarize
-split_date <- ymd_hms("2026-03-04 00:00:00 UTC")
-data_short_1 <- data_short %>%
-  filter(Time_Code <= split_date) %>%
-  mutate(
-    d.18_16.Mean = as.numeric(d.18_16.Mean),
-    d.D_H.Mean = as.numeric(d.D_H.Mean)
-  ) %>%
-  group_by(Identifier_1) %>%
-  summarise(
-    d.18_16.Mean.Mean = mean(d.18_16.Mean, na.rm = TRUE),
-    `d(18_16)Mean.Sd` = sd(d.18_16.Mean, na.rm = TRUE),
-    `d(D_H)Mean.Mean` = mean(d.D_H.Mean, na.rm = TRUE),
-    `d(D_H)Mean.Sd` = sd(d.D_H.Mean, na.rm = TRUE),
-    .groups = "drop"
-  )
-data_short_2 <- data_short %>%
-  filter(Time_Code > split_date) %>%
-  mutate(
-    d.18_16.Mean = as.numeric(d.18_16.Mean),
-    d.D_H.Mean = as.numeric(d.D_H.Mean)
-  ) %>%
-  group_by(Identifier_1) %>%
-  summarise(
-    d.18_16.Mean.Mean = mean(d.18_16.Mean, na.rm = TRUE),
-    `d(18_16)Mean.Sd` = sd(d.18_16.Mean, na.rm = TRUE),
-    `d(D_H)Mean.Mean` = mean(d.D_H.Mean, na.rm = TRUE),
-    `d(D_H)Mean.Sd` = sd(d.D_H.Mean, na.rm = TRUE),
-    .groups = "drop"
-  )
 data_short <- data_short %>%
-  mutate(
-    d.18_16.Mean = as.numeric(d.18_16.Mean),
-    d.D_H.Mean = as.numeric(d.D_H.Mean)
-  ) %>%
   group_by(Identifier_1) %>%
   summarise(
     d.18_16.Mean.Mean = mean(d.18_16.Mean, na.rm = TRUE),
@@ -100,77 +68,173 @@ data_standards <- data %>%
   filter(Identifier_1 %in% ids_standards) %>%
   group_by(Port) %>%
   arrange(Port, desc(Inj_Nr)) %>%  # Sort by ID and descending injection number
-  slice_head(n = 3) %>%                     # Keep only the top 3 (last 3 injections)
-  ungroup()
+  slice_head(n = 3) %>%            # Keep only the top 3 (last 3 injections)
+  ungroup() %>%
+  filter(
+    !Port %in% c(
+      "1-01", "1-02", "1-94", "1-93", # Keep only last of first (1-03) and last (1-95) block for standard medium
+      "1-04", "1-05", "1-90", "1-91", # of Standardheavy (1-06 and 1-92)
+      "1-07", "1-08", "1-87", "1-88"  # and of Superheavy (1-09 and 1-89)
+    )
+  )
 
 # Identify jumps
 test1 <- data_standards %>% filter(Identifier_1 == "Standardmedium")
-plot(test1$Time_Code, test1$d.D_H.Mean)
+plot(test1$Time_Code, test1$d.18_16.Mean)
 test2 <- data_standards %>% filter(Identifier_1 == "Standardheavy")
-plot(test2$Time_Code, test2$d.D_H.Mean)
+plot(test2$Time_Code, test2$d.18_16.Mean)
 test3 <- data_standards %>% filter(Identifier_1 == "Superheavy")
-plot(test3$Time_Code, test3$d.D_H.Mean)
+plot(test3$Time_Code, test3$d.18_16.Mean)
+
+# Summarize standards
+data_standards_means <- data_standards %>%
+  group_by(Port) %>%
+  summarise(
+    d.18_16.Mean.Mean = mean(d.18_16.Mean, na.rm = TRUE),
+    d.18_16.Mean.Sd = sd(d.18_16.Mean, na.rm = TRUE),
+    d.D_H.Mean.Mean = mean(d.D_H.Mean, na.rm = TRUE),
+    d.D_H.Mean.Sd = sd(d.D_H.Mean, na.rm = TRUE),
+    Identifier_1 = first(Identifier_1),
+    Time_Code = first(Time_Code),
+    .groups = "drop"
+  )
+
+test1 <- data_standards_means %>% filter(Identifier_1 == "Standardmedium")
+plot(test1$Time_Code, test1$d.18_16.Mean.Mean)
+test2 <- data_standards_means %>% filter(Identifier_1 == "Standardheavy")
+plot(test2$Time_Code, test2$d.18_16.Mean.Mean)
+test3 <- data_standards_means %>% filter(Identifier_1 == "Superheavy")
+plot(test3$Time_Code, test3$d.18_16.Mean.Mean)
 
 # Fit model for calibration
+Standardmedium_d.18_16_gt <- -9.05
+Standardheavy_d.18_16_gt <- -4.91
+Superheavy_d.18_16_gt <- -0.18
+Standardmedium_d.D_H_gt <- -63.63
+Standardheavy_d.D_H_gt <- -10.18
+Superheavy_d.D_H_gt <- 54.05
 standards <- data.frame(standard= c("Standardmedium", "Standardheavy", "Superheavy"),
-                        d.18_16= c(-9.05, -4.91, -0.18),
-                        d.D_H= c(-63.63, -10.18, 54.05))
+                        d.18_16= c(Standardmedium_d.18_16_gt, Standardheavy_d.18_16_gt, Superheavy_d.18_16_gt),
+                        d.D_H= c(Standardmedium_d.D_H_gt, Standardheavy_d.D_H_gt, Superheavy_d.D_H_gt))
 
 # kalibriert alle laufenden Standards mit dem ersten Standardblock
-
-# berechnet dann die Differenz der Werte zu den Soll Werten (18O Dif und 2 H Dif). Dann könnt ihr diese Differenz gegen die Injektionnummer oder besser Zeit bei euch auftragen und dann könnt ihr sehen, wie die Werte wegdriften. Wenn das so aussieht, wie bei 2H in dem Beispiel, dann könnt ihr für x die Zeit/Injektionsnummer einsetzen und diesen Wert dann auf euren standardisiertes Ergebnis draufrechnen (Tab Summary auf der rechten Seite bei 18Ocor und 2Hcor).
-
-Ich würden den letzten Standardblock hinten dran auch mal wie normale Proben behandeln, dann könnt ihr schauen, wie dieser nach der Driftkorrektur aussieht.
-
-
-
-
-# ------ Drift correction
-
-# First attempt
-
-first_block_end_date <- ymd_hms("2026-03-02 23:59:00 UTC")
-last_block_start_date <- ymd_hms("2026-03-08 00:00:00 UTC")
-
-first_calib <- data_standards %>% filter(Time_Code <= first_block_end_date)
-second_calib <- data_standards %>% filter(Time_Code >= last_block_start_date)
-
-test_data_1 <- full_join(first_calib, standards, by= join_by(Identifier_1== standard))
-test_data_2 <- full_join(second_calib, standards, by= join_by(Identifier_1== standard))
-test_data <- full_join(data_standards, standards, by= join_by(Identifier_1== standard))
-
-# First Block
-lm_d.18_16_1 <- lm(d.18_16 ~ d.18_16.Mean, test_data_1)
-data_short_1$d.18_16.corr <- unname(
-  predict(lm_d.18_16_1, newdata = data.frame("d.18_16.Mean"= data_short_1$d.18_16.Mean.Mean))
+first_block_calib_data <- full_join(
+  data_standards_means[1:3,], # first block only
+  standards,
+  by= join_by(Identifier_1== standard)
 )
 
-plot(d.18_16~d.18_16.Mean, test_data_1, col=as.factor(Identifier_1), pch=16,
-     xlab="measured Delta18", ylab="Standard Delta18")
-curve(lm_d.18_16_1$coefficients[2]*x+ lm_d.18_16_1$coefficients[1], add=T)
-
-# Second Block
-lm_d.18_16_2 <- lm(d.18_16 ~ d.18_16.Mean, test_data_2)
-data_short_2$d.18_16.corr <- unname(
-  predict(lm_d.18_16_2, newdata = data.frame("d.18_16.Mean"= data_short_2$d.18_16.Mean.Mean))
-)
-
-plot(d.18_16~d.18_16.Mean, test_data_2, col=as.factor(Identifier_1), pch=16,
-     xlab="measured Delta18 (2nd Block)", ylab="Standard Delta18 (2nd Block)")
-curve(lm_d.18_16_2$coefficients[2]*x+ lm_d.18_16_2$coefficients[1], add=T)
-
-# -- Second attempt
-lm_d.18_16 <- lm(d.18_16 ~ d.18_16.Mean + Time_Code, test_data)
+# Compute coefficients
+lm_d.18_16 <- lm(d.18_16 ~ d.18_16.Mean.Mean, first_block_calib_data)
 data_short$d.18_16.corr <- unname(
-  predict(lm_d.18_16, newdata = data.frame(
-    "d.18_16.Mean"= data_short$d.18_16.Mean.Mean,
-
-  ))
+  predict(lm_d.18_16, newdata = data.frame("d.18_16.Mean.Mean"= data_short$d.18_16.Mean.Mean))
 )
 
+# Plot calibration
+plot(d.18_16~d.18_16.Mean.Mean, first_block_calib_data, col=as.factor(Identifier_1), pch=16,
+     xlab="measured Delta1816", ylab="Standard Delta1816")
+curve(lm_d.18_16$coefficients[2]*x+ lm_d.18_16$coefficients[1], add=T)
 
+# Calibrate standards
+slope <- lm_d.18_16$coefficients[2]
+intercept <- lm_d.18_16$coefficients[1]
+data_standards_means$d.18_16.calib <- intercept + slope * data_standards_means[, "d.18_16.Mean.Mean"]
 
+# berechnet dann die Differenz der Werte zu den Soll Werten (18O Dif und 2 H Dif)
+data_standards_diff <- data_standards_means[-c(1:3),] %>%
+  mutate(d.18_16.diff = case_when(
+      Identifier_1 == "Standardmedium" ~ Standardmedium_d.18_16_gt - d.18_16.Mean.Mean,
+      Identifier_1 == "Standardheavy" ~ Standardheavy_d.18_16_gt - d.18_16.Mean.Mean,
+      Identifier_1 == "Superheavy" ~ Superheavy_d.18_16_gt - d.18_16.Mean.Mean
+    )
+  )
 
+# Dann könnt ihr diese Differenz gegen die Injektionnummer oder besser Zeit bei euch auftragen sehen, wie die Werte wegdriften.
+plot(data_standards_diff$Time_Code, data_standards_diff$d.18_16.diff)
 
-# Plot Standards
-plot(data_short_1$Time_Code, data_short_1$d.18_16.Mean.Mean)
+# --- Drift regression model
+
+# Wenn das so aussieht, wie bei 2H in dem Beispiel, dann könnt ihr für x die Zeit/Injektionsnummer einsetzen und
+# diesen Wert dann auf euren standardisiertes Ergebnis draufrechnen (Tab Summary auf der rechten Seite bei 18Ocor und 2Hcor).
+
+# convert time stamp -> to time past since first measurmenet
+data_standards_diff$Time_Numeric <- as.numeric(difftime(data_standards_diff$Time_Code,
+                                                       min(data_standards_diff$Time_Code),
+                                                       units = "hours"))
+
+# Fit the model
+lm_d.18_16_drift <- lm(d.18_16.diff ~ Time_Numeric + I(Time_Numeric^2), data_standards_diff)
+summary(lm_d.18_16_drift)
+
+# - Regression plot
+new_time <- seq(min(data_standards_diff$Time_Numeric),
+                max(data_standards_diff$Time_Numeric),
+                length.out = 100)
+pred <- predict(lm_d.18_16_drift,
+                newdata = data.frame(Time_Numeric = new_time),
+                se.fit = TRUE)
+pred_df <- data.frame(
+  Time_Numeric = new_time,
+  fit = pred$fit,
+  se.fit = pred$se.fit,
+  lower = pred$fit - 1.96 * pred$se.fit,
+  upper = pred$fit + 1.96 * pred$se.fit
+)
+ggplot() +
+  geom_point(data = data_standards_diff,
+             aes(x = Time_Numeric, y = d.18_16.diff)) +
+  geom_line(data = pred_df,
+            aes(x = Time_Numeric, y = fit), color = "red") +
+  geom_ribbon(data = pred_df,
+              aes(x = Time_Numeric, ymin = lower, ymax = upper),
+              alpha = 0.2, fill = "blue") +
+  labs(x = "Time (hours since first observation)",
+       y = "Delta1816 Difference") +
+  theme_minimal()
+
+# --- Predict drift
+
+# Timestamp to numeric
+data_standards_means$Time_Numeric <- as.numeric(difftime(data_standards_means$Time_Code,
+                                                         min(data_standards_means$Time_Code),
+                                                         units = "hours"))
+# Get coeffificents and intercept for drift prediction
+slope_drift_lin <- lm_d.18_16_drift$coefficients[2]
+slope_drift_quad <- lm_d.18_16_drift$coefficients[3]
+intercept_drift <- lm_d.18_16_drift$coefficients[1]
+data_standards_means <- data_standards_means %>%
+  mutate(
+    d.18_16.drift = (
+      intercept_drift + slope_drift_lin * data_standards_means$Time_Numeric +
+      slope_drift_quad * (data_standards_means$Time_Numeric^2)
+    )
+  )
+
+# - Correct the drift by adding the corrected difference
+correction <- (data_standards_means$d.18_16.calib + data_standards_means$d.18_16.drift)
+data_standards_means$d.18_16.corr <- correction$d.18_16.Mean.Mean
+
+# --- Plot corrected standardised vs original data
+
+# Reshape the data
+plot_data <- data_standards_means %>%
+  filter(Identifier_1 %in% c("Standardmedium", "Standardheavy", "Superheavy")) %>%
+  pivot_longer(
+    cols = c(d.18_16.Mean.Mean, d.18_16.corr),
+    names_to = "Value_Type",
+    values_to = "Value"
+  )
+ggplot(plot_data, aes(x = Time_Code, y = Value, color = Value_Type)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ Identifier_1, scales = "free_y", ncol = 1) +
+  labs(x = "Time", y = "Value", color = "Value Type") +
+  theme_minimal() +
+  scale_color_manual(values = c("black", "red"))
+
+# Ich würden den letzten Standardblock hinten dran auch mal wie normale Proben behandeln,
+# dann könnt ihr schauen, wie dieser nach der Driftkorrektur aussieht.
+
+# TODO Compute correction for D_H
+
+# TODO Correct the actual measurements!
