@@ -21,12 +21,10 @@ library(ggplot2)
 dir <- "/Users/johanna/Uni/ws_25_26/ecohydrology/ecohydro_project/data/Water stable isotope analysis"
 
 fname_stand <- "+ 2024 cep in-house  standards.xlsx"
-fname_template <- "2026 Ecohydrology Template water stable isotopes.csv"
 fname_data <- "20260309 Water stable isotope data.csv"
 
 data <- read_csv(file.path(dir, fname_data))
 standards <- read_excel(file.path(dir, fname_stand), skip = 1)
-template <- read_csv(file.path(dir, fname_template))
 ```
 
 * Clean column names and data
@@ -80,9 +78,10 @@ data_short <- data_short %>%
   group_by(Identifier_1) %>%
   summarise(
     d.18_16.Mean.Mean = mean(d.18_16.Mean, na.rm = TRUE),
-    `d(18_16)Mean.Sd` = sd(d.18_16.Mean, na.rm = TRUE),
-    `d(D_H)Mean.Mean` = mean(d.D_H.Mean, na.rm = TRUE),
-    `d(D_H)Mean.Sd` = sd(d.D_H.Mean, na.rm = TRUE),
+    d.18_16.Mean.Sd = sd(d.18_16.Mean, na.rm = TRUE),
+    d.D_H.Mean.Mean = mean(d.D_H.Mean, na.rm = TRUE),
+    d.D_H.Mean.Sd = sd(d.D_H.Mean, na.rm = TRUE),
+    Time_Code = first(Time_Code),
     .groups = "drop"
   )
 
@@ -138,6 +137,13 @@ test2 <- data_standards_means %>% filter(Identifier_1 == "Standardheavy")
 plot(test2$Time_Code, test2$d.18_16.Mean.Mean)
 test3 <- data_standards_means %>% filter(Identifier_1 == "Superheavy")
 plot(test3$Time_Code, test3$d.18_16.Mean.Mean)
+
+test1 <- data_standards_means %>% filter(Identifier_1 == "Standardmedium")
+plot(test1$Time_Code, test1$d.D_H.Mean.Mean)
+test2 <- data_standards_means %>% filter(Identifier_1 == "Standardheavy")
+plot(test2$Time_Code, test2$d.D_H.Mean.Mean)
+test3 <- data_standards_means %>% filter(Identifier_1 == "Superheavy")
+plot(test3$Time_Code, test3$d.D_H.Mean.Mean)
 ```
 
 * Fit model from the first standard block to calibarte standards
@@ -158,8 +164,10 @@ standards <- data.frame(standard= c("Standardmedium", "Standardheavy", "Superhea
 first_block_calib_data <- full_join(
   data_standards_means[1:3,], # first block only
   standards,
-  by= join_by(Identifier_1== standard)
+  by= join_by(Identifier_1 == standard)
 )
+
+# -- 18O
 
 # Compute coefficients
 lm_d.18_16 <- lm(d.18_16 ~ d.18_16.Mean.Mean, first_block_calib_data)
@@ -171,18 +179,37 @@ data_short$d.18_16.corr <- unname(
 plot(d.18_16~d.18_16.Mean.Mean, first_block_calib_data, col=as.factor(Identifier_1), pch=16,
      xlab="measured Delta1816", ylab="Standard Delta1816")
 curve(lm_d.18_16$coefficients[2]*x+ lm_d.18_16$coefficients[1], add=T)
+
+# -- 2H
+
+# Compute coefficients
+lm_d.D_H <- lm(d.D_H ~ d.D_H.Mean.Mean, first_block_calib_data)
+data_short$d.D_H.corr <- unname(
+  predict(lm_d.D_H, newdata = data.frame("d.D_H.Mean.Mean"= data_short$d.D_H.Mean.Mean))
+)
+
+# Plot calibration
+plot(d.D_H~d.D_H.Mean.Mean, first_block_calib_data, col=as.factor(Identifier_1), pch=16,
+     xlab="measured 2H", ylab="Standard 2H")
+curve(lm_d.D_H$coefficients[2]*x+ lm_d.D_H$coefficients[1], add=T)
 ```
 
-* Compute difference of calibrated standards to ground truth standards
+## Drift correction for 18O
+
+* Compute difference of calibrated standards to ground truth standards for 18O
 
 ```{r}
+
+# -- 18O
+
 # Calibrate standards
 slope <- lm_d.18_16$coefficients[2]
 intercept <- lm_d.18_16$coefficients[1]
 data_standards_means$d.18_16.calib <- intercept + slope * data_standards_means[, "d.18_16.Mean.Mean"]
 
 # berechnet dann die Differenz der Werte zu den Soll Werten (18O Dif und 2 H Dif)
-data_standards_diff <- data_standards_means[-c(1:3),] %>%
+n <- nrow(data_standards_means)
+data_standards_diff <- data_standards_means %>%
   mutate(d.18_16.diff = case_when(
       Identifier_1 == "Standardmedium" ~ Standardmedium_d.18_16_gt - d.18_16.Mean.Mean,
       Identifier_1 == "Standardheavy" ~ Standardheavy_d.18_16_gt - d.18_16.Mean.Mean,
@@ -282,14 +309,145 @@ ggplot(plot_data, aes(x = Time_Code, y = Value, color = Value_Type)) +
   scale_color_manual(values = c("black", "red"))
 ```
 
-* TODOs
+## Drift correction for 2H
+
+* Compute difference of calibrated standards to ground truth standards for 2H
 
 ```{r}
-# Ich würden den letzten Standardblock hinten dran auch mal wie normale Proben behandeln,
-# dann könnt ihr schauen, wie dieser nach der Driftkorrektur aussieht.
 
-# TODO Compute correction for D_H
+# -- 2H
 
-# TODO Correct the actual measurements!
+# Calibrate standards
+slope <- lm_d.D_H$coefficients[2]
+intercept <- lm_d.D_H$coefficients[1]
+data_standards_means$d.D_H.calib <- intercept + slope * data_standards_means[, "d.D_H.Mean.Mean"]
 
+# berechnet dann die Differenz der Werte zu den Soll Werten (18O Dif und 2 H Dif)
+n <- nrow(data_standards_means)
+data_standards_diff <- data_standards_diff %>%
+  mutate(d.D_H.diff = case_when(
+      Identifier_1 == "Standardmedium" ~ Standardmedium_d.D_H_gt - d.D_H.Mean.Mean,
+      Identifier_1 == "Standardheavy" ~ Standardheavy_d.D_H_gt - d.D_H.Mean.Mean,
+      Identifier_1 == "Superheavy" ~ Superheavy_d.D_H_gt - d.D_H.Mean.Mean
+    )
+  )
+
+# Dann könnt ihr diese Differenz gegen die Injektionnummer oder besser Zeit bei euch auftragen sehen, wie die Werte wegdriften.
+plot(data_standards_diff$Time_Code, data_standards_diff$d.D_H.diff)
+```
+
+* Fit a regression model for the drift
+
+```{r}
+# --- Drift regression model
+
+# Wenn das so aussieht, wie bei 2H in dem Beispiel, dann könnt ihr für x die Zeit/Injektionsnummer einsetzen und
+# diesen Wert dann auf euren standardisiertes Ergebnis draufrechnen (Tab Summary auf der rechten Seite bei 18Ocor und 2Hcor).
+
+# Fit the model
+lm_d.D_H_drift <- lm(d.D_H.diff ~ Time_Numeric + I(Time_Numeric^2), data_standards_diff)
+summary(lm_d.D_H_drift)
+
+# - Regression plot
+new_time <- seq(min(data_standards_diff$Time_Numeric),
+                max(data_standards_diff$Time_Numeric),
+                length.out = 100)
+pred <- predict(lm_d.D_H_drift,
+                newdata = data.frame(Time_Numeric = new_time),
+                se.fit = TRUE)
+pred_df <- data.frame(
+  Time_Numeric = new_time,
+  fit = pred$fit,
+  se.fit = pred$se.fit,
+  lower = pred$fit - 1.96 * pred$se.fit,
+  upper = pred$fit + 1.96 * pred$se.fit
+)
+ggplot() +
+  geom_point(data = data_standards_diff,
+             aes(x = Time_Numeric, y = d.D_H.diff)) +
+  geom_line(data = pred_df,
+            aes(x = Time_Numeric, y = fit), color = "red") +
+  geom_ribbon(data = pred_df,
+              aes(x = Time_Numeric, ymin = lower, ymax = upper),
+              alpha = 0.2, fill = "blue") +
+  labs(x = "Time (hours since first observation)",
+       y = "Delta1816 Difference to ground truth") +
+  theme_minimal()
+```
+
+* Predict the drift from time stamps and plot corrected vs original data
+
+```{r}
+# --- Predict drift
+
+# Get coeffificents and intercept for drift prediction
+slope_drift_lin.D_H <- lm_d.D_H_drift$coefficients[2]
+slope_drift_quad.D_H <- lm_d.D_H_drift$coefficients[3]
+intercept_drift.D_H <- lm_d.D_H_drift$coefficients[1]
+data_standards_means <- data_standards_means %>%
+  mutate(
+    d.D_H.drift = (
+      intercept_drift.D_H + slope_drift_lin.D_H * data_standards_means$Time_Numeric +
+      slope_drift_quad.D_H * (data_standards_means$Time_Numeric^2)
+    )
+  )
+
+# - Correct the drift by adding the corrected difference
+correction <- (data_standards_means$d.D_H.calib + data_standards_means$d.D_H.drift)
+data_standards_means$d.D_H.corr <- correction$d.D_H.Mean.Mean
+
+# --- Plot corrected standardised vs original data
+
+# Reshape the data
+plot_data <- data_standards_means %>%
+  filter(Identifier_1 %in% c("Standardmedium", "Standardheavy", "Superheavy")) %>%
+  pivot_longer(
+    cols = c(d.D_H.Mean.Mean, d.D_H.corr),
+    names_to = "Value_Type",
+    values_to = "Value"
+  )
+ggplot(plot_data, aes(x = Time_Code, y = Value, color = Value_Type)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ Identifier_1, scales = "free_y", ncol = 1) +
+  labs(x = "Time", y = "Value", color = "Value Type") +
+  theme_minimal() +
+  scale_color_manual(values = c("black", "red"))
+```
+
+## Correct measurements
+
+* Correct 18O
+
+```{r}
+data_short$Time_Numeric <- as.numeric(difftime(data_short$Time_Code,
+                                               min(data_short$Time_Code),
+                                                  units = "hours"))
+
+data_short$drift.18_16 <- unname(predict(lm_d.18_16_drift, newdata = data.frame(Time_Numeric=data_short$Time_Numeric)))
+
+data_short$d.18_16.corr.drift <- data_short$d.18_16.corr + data_short$drift.18_16
+
+plot(d.18_16.corr~Time_Code, data= data_short)
+points(d.18_16.corr.drift~Time_Code, data= data_short, col="orange")
+```
+
+* Correct 2H
+
+```{r}
+data_short$drift.D_H
+```
+
+```{r}
+data_short$drift.D_H <- unname(predict(lm_d.D_H_drift, newdata = data.frame(Time_Numeric=data_short$Time_Numeric)))
+
+data_short$d.D_H.corr.drift <- data_short$d.D_H.corr + data_short$drift.D_H
+
+data_short_no_label <- data_short %>% filter(d.D_H.corr < 4000)
+
+plot(d.D_H.corr ~ Time_Code, data= data_short_no_label)
+points(d.D_H.corr.drift ~ Time_Code, data= data_short_no_label, col="orange")
+
+plot(d.D_H.corr ~ Time_Code, data= data_short)
+points(d.D_H.corr.drift ~ Time_Code, data= data_short, col="orange")
 ```
