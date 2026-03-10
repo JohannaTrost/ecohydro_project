@@ -300,6 +300,7 @@ plot_data <- data_standards_means %>%
     names_to = "Value_Type",
     values_to = "Value"
   )
+
 ggplot(plot_data, aes(x = Time_Code, y = Value, color = Value_Type)) +
   geom_point() +
   geom_line() +
@@ -406,6 +407,7 @@ plot_data <- data_standards_means %>%
     names_to = "Value_Type",
     values_to = "Value"
   )
+
 ggplot(plot_data, aes(x = Time_Code, y = Value, color = Value_Type)) +
   geom_point() +
   geom_line() +
@@ -413,6 +415,7 @@ ggplot(plot_data, aes(x = Time_Code, y = Value, color = Value_Type)) +
   labs(x = "Time", y = "Value", color = "Value Type") +
   theme_minimal() +
   scale_color_manual(values = c("black", "red"))
+dev.off()
 ```
 
 ## Correct measurements
@@ -450,4 +453,41 @@ points(d.D_H.corr.drift ~ Time_Code, data= data_short_no_label, col="orange")
 
 plot(d.D_H.corr ~ Time_Code, data= data_short)
 points(d.D_H.corr.drift ~ Time_Code, data= data_short, col="orange")
+```
+* Create final dataframe with corrected values
+
+```{r}
+
+final_df <- data_short
+
+final_df <- final_df %>%
+  mutate(
+    species = case_when(
+      substr(Identifier_1, 1, 2) == "SD" ~ "Douglas fir",
+      substr(Identifier_1, 1, 2) == "SK" ~ "Pine",
+      substr(Identifier_1, 1, 1) == "D"  ~ "Douglas fir",
+      substr(Identifier_1, 1, 1) == "K"  ~ "Pine",
+      TRUE ~ NA_character_
+    )
+  )
+
+final_df$level <- ifelse(substr(final_df$Identifier_1, 4, 5)=="hi", "high",
+                           ifelse(substr(final_df$Identifier_1, 4, 5)=="mi","mid",
+                                  ifelse(substr(final_df$Identifier_1, 4, 5)=="lo", "low", NA)))
+final_df$level <- factor(final_df$level, levels = c("low", "mid", "high"))
+
+final_df$Date <- as.Date(ifelse(substr(final_df$Identifier_1, start= 8, 9) %in% c("1", "_1"), as.Date("2026-02-25"),
+                    ifelse(substr(final_df$Identifier_1, start= 8, 9) %in% c("2", "_2"), as.Date("2026-02-26"),
+                           ifelse(substr(final_df$Identifier_1, start= 8, 9) %in% c("3", "_3"), as.Date("2026-02-27"), NA))      ))
+
+final_df$Date[which(final_df$Identifier_1 %in% c("D1_C", "D2_C", "D3_C", "K1_C", "K2_C", "K3_C"))] <- as.Date("2026-02-24")
+
+final_df <- final_df %>% select(-Time_Numeric)
+
+View(final_df)
+```
+* Save data
+
+```{r}
+write_csv(final_df, file.path(dir, "20260309_water_stable_isotope_data_corrected.csv"))
 ```
