@@ -230,6 +230,7 @@ plot(data_standards_diff$Time_Code, data_standards_diff$d.18_16.diff)
 # diesen Wert dann auf euren standardisiertes Ergebnis draufrechnen (Tab Summary auf der rechten Seite bei 18Ocor und 2Hcor).
 
 # convert time stamp -> to time past since first measurmenet
+data_standards_diff <- head(data_standards_diff, nrow(data_standards_diff) - 3)
 data_standards_diff$Time_Numeric <- as.numeric(difftime(data_standards_diff$Time_Code,
                                                        min(data_standards_diff$Time_Code),
                                                        units = "hours"))
@@ -438,10 +439,6 @@ points(d.18_16.corr.drift~Time_Code, data= data_short, col="orange")
 * Correct 2H
 
 ```{r}
-data_short$drift.D_H
-```
-
-```{r}
 data_short$drift.D_H <- unname(predict(lm_d.D_H_drift, newdata = data.frame(Time_Numeric=data_short$Time_Numeric)))
 
 data_short$d.D_H.corr.drift <- data_short$d.D_H.corr + data_short$drift.D_H
@@ -489,5 +486,5 @@ View(final_df)
 * Save data
 
 ```{r}
-write_csv(final_df, file.path(dir, "20260309_water_stable_isotope_data_corrected.csv"))
+write_csv(final_df, file.path(dir, "20260309_water_stable_isotope_data_corrected_v2.csv"))
 ```
