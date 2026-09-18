@@ -190,7 +190,7 @@ data_short$d.D_H.corr <- unname(
 
 # Plot calibration
 plot(d.D_H~d.D_H.Mean.Mean, first_block_calib_data, col=as.factor(Identifier_1), pch=16,
-     xlab="measured 2H", ylab="Standard 2H")
+     xlab="Measured Delta D [‰]", ylab="Standard Delta D [‰]", fontsize = 16)
 curve(lm_d.D_H$coefficients[2]*x+ lm_d.D_H$coefficients[1], add=T)
 ```
 
@@ -364,17 +364,28 @@ pred_df <- data.frame(
   lower = pred$fit - 1.96 * pred$se.fit,
   upper = pred$fit + 1.96 * pred$se.fit
 )
-ggplot() +
+
+p <- ggplot() +
   geom_point(data = data_standards_diff,
-             aes(x = Time_Numeric, y = d.D_H.diff)) +
+             aes(x = Time_Numeric, y = d.D_H.diff), color = "grey") +
   geom_line(data = pred_df,
-            aes(x = Time_Numeric, y = fit), color = "red") +
+            aes(x = Time_Numeric, y = fit), color = "darkgrey") +
   geom_ribbon(data = pred_df,
               aes(x = Time_Numeric, ymin = lower, ymax = upper),
-              alpha = 0.2, fill = "blue") +
-  labs(x = "Time (hours since first observation)",
-       y = "Delta1816 Difference to ground truth") +
+              alpha = 0.2, fill = "grey") +
+  labs(x = "Time t (hours since first observation)",
+       y = "Delta D ground truth - measurement [‰] ") +
   theme_minimal()
+
+# Save the plot using ggsave
+ggsave(
+  filename = file.path(outdir, "2H_regression.png"),
+  plot = p,
+  width = 5,
+  height = 4,
+  dpi = 300,  # Optional: Set DPI for higher quality
+  bg = "white"
+)
 ```
 
 * Predict the drift from time stamps and plot corrected vs original data
@@ -416,7 +427,7 @@ ggplot(plot_data, aes(x = Time_Code, y = Value, color = Value_Type)) +
   labs(x = "Time", y = "Value", color = "Value Type") +
   theme_minimal() +
   scale_color_manual(values = c("black", "red"))
-dev.off()
+#dev.off()
 ```
 
 ## Correct measurements
